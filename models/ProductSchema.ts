@@ -30,6 +30,9 @@ export class Product {
   @Prop({ required: true })
   sellingPrice: number;
 
+  @Prop()
+  promotionalPrice?: number;
+
   @Prop({ required: true })
   mainCategory: string;
 
@@ -68,6 +71,9 @@ export class Product {
     default: []
   })
   variants: Variant[];
+
+  @Prop({ type: String, ref: 'User', required: true })
+  userId: string;
 }
 
 export const ProductSchema = SchemaFactory.createForClass(Product); 

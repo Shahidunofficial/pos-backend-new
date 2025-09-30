@@ -13,6 +13,9 @@ export class Category {
 
   @Prop({ required: true, min: 1, max: 3 })
   level: number;
+
+  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
+  userId: string;
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);

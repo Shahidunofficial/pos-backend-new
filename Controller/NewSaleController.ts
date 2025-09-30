@@ -1,12 +1,13 @@
-import { Controller, Post, Get, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, HttpException, HttpStatus, UseGuards, Request } from '@nestjs/common';
 import { ProductService } from '../service/ProductService';
 import { SaleService } from '../service/SaleService';
 import { ProductDocument } from '../models/ProductSchema';
 import { SaleDocument } from '../models/SaleSchema';
 import { Types } from 'mongoose';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 
 export interface SaleItem {
-  productId: Types.ObjectId;
+  productId: string;
   quantity: number;
   price: number;
 }
@@ -47,6 +48,7 @@ export interface Receipt {
 }
 
 @Controller('sales')
+@UseGuards(JwtAuthGuard)
 export class NewSaleController {
   constructor(
     private readonly productService: ProductService,
@@ -54,7 +56,7 @@ export class NewSaleController {
   ) {}
   
   @Post()
-  async createSale(@Body() createSaleDto: CreateSaleDto): Promise<SaleDocument> {
+  async createSale(@Body() createSaleDto: CreateSaleDto, @Request() req): Promise<SaleDocument> {
     try {
       if (!createSaleDto.items || createSaleDto.items.length === 0) {
         throw new HttpException('Sale must contain at least one item', HttpStatus.BAD_REQUEST);
@@ -62,6 +64,7 @@ export class NewSaleController {
 
       const saleItems: SaleItem[] = [];
       let total = 0;
+      let profit = 0;
 
       // Process each item in the sale
       for (const item of createSaleDto.items) {
@@ -69,8 +72,8 @@ export class NewSaleController {
           throw new HttpException('Quantity must be greater than 0', HttpStatus.BAD_REQUEST);
         }
 
-        // Get product details
-        const product = await this.productService.findById(item.productId);
+        // Get product details for the current user
+        const product = await this.productService.findByIdAndUser(item.productId, req.user.sub);
         if (!product) {
           throw new HttpException(`Product with ID ${item.productId} not found`, HttpStatus.NOT_FOUND);
         }
@@ -78,8 +81,14 @@ export class NewSaleController {
         // If product has variants, use the default variant's price and stock
         // Otherwise use the base price and treat stock as 0
         const defaultVariant = product.variants && product.variants[0];
-        const price = defaultVariant ? defaultVariant.sellingPrice : product.basePrice;
+        const sellingPrice = defaultVariant ? defaultVariant.sellingPrice : product.sellingPrice;
         const stock = defaultVariant ? defaultVariant.stock : 0;
+        const purchasedPrice=defaultVariant?defaultVariant.purchasedPrice: product.purchasedPrice;
+        
+        //calculate itemProfit
+        const itemProfit= (sellingPrice-purchasedPrice)*item.quantity;
+        profit +=itemProfit;
+
 
         // Check stock availability
         if (stock < item.quantity) {
@@ -89,11 +98,12 @@ export class NewSaleController {
           );
         }
 
-        // Create sale item
+        // Create sale item with profit
         const saleItem: SaleItem = {
-          productId: new Types.ObjectId(item.productId),
+          productId: item.productId,
           quantity: item.quantity,
-          price: price,
+          price: sellingPrice,
+        
         };
 
         saleItems.push(saleItem);
@@ -102,38 +112,41 @@ export class NewSaleController {
 
       // Update stock for all products
       for (const item of createSaleDto.items) {
-        await this.productService.updateStock(item.productId, -item.quantity);
+        await this.productService.updateStockByUser(item.productId, -item.quantity, req.user.sub);
       }
 
       // Create the sale
       const sale = await this.saleService.create({
         items: saleItems,
-        total,
+        total,     
+        profit,                          
         customerName: createSaleDto.customerName,
+        userId: req.user.sub,
       });
-
+      console.log('sale created successfully');
       return sale;
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
+        console.log('error creating sale')
       }
       throw new HttpException('Failed to create sale', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Get()
-  async getAllSales(): Promise<SaleDocument[]> {
+  async getAllSales(@Request() req): Promise<SaleDocument[]> {
     try {
-      return await this.saleService.findAll();
+      return await this.saleService.findAllByUser(req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch sales', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Get(':id')
-  async getSaleById(@Param('id') id: string): Promise<SaleDocument> {
+  async getSaleById(@Param('id') id: string, @Request() req): Promise<SaleDocument> {
     try {
-      const sale = await this.saleService.findById(id);
+      const sale = await this.saleService.findByIdAndUser(id, req.user.sub);
       if (!sale) {
         throw new HttpException('Sale not found', HttpStatus.NOT_FOUND);
       }
@@ -147,18 +160,18 @@ export class NewSaleController {
   }
 
   @Get('products/available')
-  async getAvailableProducts(): Promise<ProductDocument[]> {
+  async getAvailableProducts(@Request() req): Promise<ProductDocument[]> {
     try {
-      return await this.productService.findAvailableProducts();
+      return await this.productService.findAvailableProductsByUser(req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch available products', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Get(':id/receipt')
-  async generateReceipt(@Param('id') id: string): Promise<Receipt> {
+  async generateReceipt(@Param('id') id: string, @Request() req): Promise<Receipt> {
     try {
-      const sale = await this.saleService.findById(id);
+      const sale = await this.saleService.findByIdAndUser(id, req.user.sub);
       if (!sale) {
         throw new HttpException('Sale not found', HttpStatus.NOT_FOUND);
       }
@@ -172,7 +185,7 @@ export class NewSaleController {
       }> = [];
       
       for (const item of sale.items) {
-        const product = await this.productService.findById(item.productId.toString());
+        const product = await this.productService.findByIdAndUser(item.productId.toString(), req.user.sub);
         receiptItems.push({
           name: product ? product.name : `Product ${item.productId}`,
           quantity: item.quantity,
@@ -182,14 +195,14 @@ export class NewSaleController {
       }
 
       const subtotal = sale.total;
-      const tax = subtotal * 0.1; // 10% tax
+      const tax = subtotal * 0; // 10% tax
       const total = subtotal + tax;
 
       const receipt: Receipt = {
         saleId: (sale as any)._id.toString(),
-        storeName: 'POS Store',
-        storeAddress: '123 Business Street, City, State 12345',
-        storePhone: '(555) 123-4567',
+        storeName: 'CellCare (PVT) LTD',
+        storeAddress: '225,Dehiwala Road,Boralesgamuwa',
+        storePhone: '0701343431',
         customerName: sale.customerName,
         saleDate: (sale as any).createdAt.toLocaleString(),
         items: receiptItems,
@@ -209,9 +222,9 @@ export class NewSaleController {
   }
 
   @Get(':id/receipt/print')
-  async getPrintReceipt(@Param('id') id: string): Promise<{ receiptText: string }> {
+  async getPrintReceipt(@Param('id') id: string, @Request() req): Promise<{ receiptText: string }> {
     try {
-      const receipt = await this.generateReceipt(id);
+      const receipt = await this.generateReceipt(id, req);
       const receiptText = this.formatReceiptFor3Inch(receipt);
       return { receiptText };
     } catch (error) {

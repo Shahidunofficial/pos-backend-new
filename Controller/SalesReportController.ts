@@ -1,4 +1,4 @@
-import { Controller, Get, Query, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Query, HttpException, HttpStatus, UseGuards, Request } from '@nestjs/common';
 import {
   SalesReportService,
   DailySalesReport,
@@ -7,25 +7,27 @@ import {
   SalesOverview,
 } from '../models/SalesReportModel';
 import { SaleDocument } from '../models/SaleSchema';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 
 @Controller('reports')
+@UseGuards(JwtAuthGuard)
 export class SalesReportController {
   constructor(private readonly salesReportService: SalesReportService) {}
   
   @Get('overview')
-  async getSalesOverview(): Promise<SalesOverview> {
+  async getSalesOverview(@Request() req): Promise<SalesOverview> {
     try {
-      return await this.salesReportService.getSalesOverview();
+      return await this.salesReportService.getSalesOverviewByUser(req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch sales overview', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Get('daily')
-  async getDailySalesReport(@Query('date') date?: string): Promise<DailySalesReport> {
+  async getDailySalesReport(@Request() req, @Query('date') date?: string): Promise<DailySalesReport> {
     try {
       const targetDate = date || new Date().toISOString().split('T')[0];
-      return await this.salesReportService.getDailySalesReport(targetDate);
+      return await this.salesReportService.getDailySalesReportByUser(targetDate, req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch daily sales report', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -33,6 +35,7 @@ export class SalesReportController {
 
   @Get('monthly')
   async getMonthlySalesReport(
+    @Request() req,
     @Query('month') month?: string,
     @Query('year') year?: string
   ): Promise<MonthlySalesReport> {
@@ -45,7 +48,7 @@ export class SalesReportController {
         throw new HttpException('Invalid month. Must be between 1 and 12', HttpStatus.BAD_REQUEST);
       }
 
-      return await this.salesReportService.getMonthlySalesReport(targetMonth, targetYear);
+      return await this.salesReportService.getMonthlySalesReportByUser(targetMonth, targetYear, req.user.sub);
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
@@ -55,9 +58,9 @@ export class SalesReportController {
   }
 
   @Get('products')
-  async getProductSalesReport(): Promise<ProductSalesReport[]> {
+  async getProductSalesReport(@Request() req): Promise<ProductSalesReport[]> {
     try {
-      return await this.salesReportService.getProductSalesReport();
+      return await this.salesReportService.getProductSalesReportByUser(req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch product sales report', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -66,7 +69,8 @@ export class SalesReportController {
   @Get('date-range')
   async getSalesByDateRange(
     @Query('startDate') startDate: string,
-    @Query('endDate') endDate: string
+    @Query('endDate') endDate: string,
+    @Request() req
   ): Promise<SaleDocument[]> {
     try {
       if (!startDate || !endDate) {
@@ -85,7 +89,7 @@ export class SalesReportController {
         throw new HttpException('Start date must be before end date', HttpStatus.BAD_REQUEST);
       }
 
-      return await this.salesReportService.getSalesByDateRange(startDate, endDate);
+      return await this.salesReportService.getSalesByDateRangeByUser(startDate, endDate, req.user.sub);
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
@@ -95,7 +99,7 @@ export class SalesReportController {
   }
 
   @Get('analytics')
-  async getAnalytics(): Promise<{
+  async getAnalytics(@Request() req): Promise<{
     totalSalesThisMonth: number;
     totalSalesLastMonth: number;
     growthPercentage: number;
@@ -111,9 +115,9 @@ export class SalesReportController {
       const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
 
       const [thisMonthReport, lastMonthReport, productReport] = await Promise.all([
-        this.salesReportService.getMonthlySalesReport(currentMonth, currentYear),
-        this.salesReportService.getMonthlySalesReport(lastMonth, lastMonthYear),
-        this.salesReportService.getProductSalesReport(),
+        this.salesReportService.getMonthlySalesReportByUser(currentMonth, currentYear, req.user.sub),
+        this.salesReportService.getMonthlySalesReportByUser(lastMonth, lastMonthYear, req.user.sub),
+        this.salesReportService.getProductSalesReportByUser(req.user.sub),
       ]);
 
       // Calculate growth percentage
@@ -124,7 +128,7 @@ export class SalesReportController {
       // Get recent sales (last 10)
       const endDate = today.toISOString().split('T')[0];
       const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const recentSales = await this.salesReportService.getSalesByDateRange(startDate, endDate);
+      const recentSales = await this.salesReportService.getSalesByDateRangeByUser(startDate, endDate, req.user.sub);
 
       return {
         totalSalesThisMonth: thisMonthReport.totalRevenue,

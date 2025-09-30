@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, HttpException, HttpStatus, UseGuards, Request } from '@nestjs/common';
 import { Category, CategoryDocument } from '../models/CategorySchema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 
 interface CreateCategoryDto {
   name: string;
@@ -10,17 +11,18 @@ interface CreateCategoryDto {
 }
 
 @Controller('categories')
+@UseGuards(JwtAuthGuard)
 export class CategoryController {
   constructor(
     @InjectModel(Category.name) private categoryModel: Model<CategoryDocument>
   ) {}
 
   @Get()
-  async getAllCategories(): Promise<any[]> {
+  async getAllCategories(@Request() req): Promise<any[]> {
     try {
-      // Only fetch main categories (level 1), subcategories will be populated automatically
+      // Only fetch main categories (level 1) for the current user, subcategories will be populated automatically
       const categories = await this.categoryModel
-        .find({ level: 1 })
+        .find({ level: 1, userId: req.user.sub })
         .populate({
           path: 'subCategories',
           populate: {
@@ -46,7 +48,7 @@ export class CategoryController {
   }
 
   @Post()
-  async createCategory(@Body() createCategoryDto: CreateCategoryDto): Promise<any> {
+  async createCategory(@Body() createCategoryDto: CreateCategoryDto, @Request() req): Promise<any> {
     try {
       if (!createCategoryDto.name) {
         throw new HttpException('Name is required', HttpStatus.BAD_REQUEST);
@@ -67,7 +69,10 @@ export class CategoryController {
           throw new HttpException('Parent category is required for subcategories', HttpStatus.BAD_REQUEST);
         }
 
-        const parentCategory = await this.categoryModel.findById(createCategoryDto.parentId);
+        const parentCategory = await this.categoryModel.findOne({ 
+          _id: createCategoryDto.parentId, 
+          userId: req.user.sub 
+        });
         if (!parentCategory) {
           throw new HttpException('Parent category not found', HttpStatus.NOT_FOUND);
         }
@@ -78,7 +83,10 @@ export class CategoryController {
         }
       }
 
-      const category = new this.categoryModel(createCategoryDto);
+      const category = new this.categoryModel({
+        ...createCategoryDto,
+        userId: req.user.sub
+      });
       const savedCategory = await category.save();
       
       // Return with id field for frontend compatibility

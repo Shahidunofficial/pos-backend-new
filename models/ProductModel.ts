@@ -6,6 +6,7 @@ export interface Product {
   category: string;
   createdAt: Date;
   updatedAt: Date;
+  userId: string;
 }
 
 export class ProductModel {

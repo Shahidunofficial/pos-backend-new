@@ -1,11 +1,13 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, HttpException, HttpStatus, UseGuards, Request } from '@nestjs/common';
 import { ProductService, CreateProductDto, UpdateProductDto } from '../service/ProductService';
 import { Product, ProductDocument } from '../models/ProductSchema';
 import { Category, CategoryDocument } from '../models/CategorySchema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 
 @Controller('products')
+@UseGuards(JwtAuthGuard)
 export class ProductController {
   constructor(
     private readonly productService: ProductService,
@@ -13,9 +15,10 @@ export class ProductController {
   ) {}
   
   @Post()
-  async createProduct(@Body() createProductDto: CreateProductDto): Promise<ProductDocument> {
+  async createProduct(@Body() createProductDto: CreateProductDto, @Request() req): Promise<ProductDocument> {
     try {
       // Validate required fields
+      
       if (!createProductDto.name || !createProductDto.brand || !createProductDto.mainCategory || !createProductDto.description) {
         throw new HttpException('Name, brand, main category, and description are required', HttpStatus.BAD_REQUEST);
       }
@@ -32,50 +35,8 @@ export class ProductController {
         throw new HttpException('Maximum 3 images allowed', HttpStatus.BAD_REQUEST);
       }
 
-      // Validate variants
-      if (!createProductDto.variants || createProductDto.variants.length === 0) {
-        // Create default variant if none provided
-        createProductDto.variants = [{
-          id: 'default',
-          purchasedPrice: createProductDto.purchasedPrice,
-          sellingPrice: createProductDto.sellingPrice,
-          stock: 0
-        }];
-      } else {
-        // Validate each variant
-        for (const variant of createProductDto.variants) {
-          if (variant.purchasedPrice <= 0 || variant.sellingPrice <= 0) {
-            throw new HttpException(`Variant ${variant.id} prices must be greater than 0`, HttpStatus.BAD_REQUEST);
-          }
-          if (variant.stock < 0) {
-            throw new HttpException(`Variant ${variant.id} stock cannot be negative`, HttpStatus.BAD_REQUEST);
-          }
-        }
-      }
 
-      // Validate that the main category exists
-      const mainCategory = await this.categoryModel.findById(createProductDto.mainCategory);
-      if (!mainCategory) {
-        throw new HttpException('Main category not found', HttpStatus.BAD_REQUEST);
-      }
-
-      // If subcategory is provided, validate it exists and belongs to the main category
-      if (createProductDto.subCategory) {
-        const subCategory = await this.categoryModel.findById(createProductDto.subCategory);
-        if (!subCategory || subCategory.parentId?.toString() !== createProductDto.mainCategory) {
-          throw new HttpException('Invalid sub-category', HttpStatus.BAD_REQUEST);
-        }
-
-        // If sub-subcategory is provided, validate it exists and belongs to the subcategory
-        if (createProductDto.subSubCategory) {
-          const subSubCategory = await this.categoryModel.findById(createProductDto.subSubCategory);
-          if (!subSubCategory || subSubCategory.parentId?.toString() !== createProductDto.subCategory) {
-            throw new HttpException('Invalid sub-sub-category', HttpStatus.BAD_REQUEST);
-          }
-        }
-      }
-
-      const product = await this.productService.create(createProductDto);
+      const product = await this.productService.create(createProductDto, req.user.sub);
       return product;
     } catch (error) {
       if (error instanceof HttpException) {
@@ -86,18 +47,21 @@ export class ProductController {
   }
 
   @Get()
-  async getAllProducts(): Promise<ProductDocument[]> {
+  async getAllProducts(@Request() req): Promise<ProductDocument[]> {
     try {
-      return await this.productService.findAll();
+      if (!req.user || !req.user.sub) {
+        throw new HttpException('User ID not provided', HttpStatus.BAD_REQUEST);
+      }
+      return await this.productService.findAllByUser(req.user.sub);
     } catch (error) {
       throw new HttpException('Failed to fetch products', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   @Get(':id')
-  async getProductById(@Param('id') id: string): Promise<ProductDocument> {
+  async getProductById(@Param('id') id: string, @Request() req): Promise<ProductDocument> {
     try {
-      const product = await this.productService.findById(id);
+      const product = await this.productService.findByIdAndUser(id, req.user.sub);
       if (!product) {
         throw new HttpException('Product not found', HttpStatus.NOT_FOUND);
       }
@@ -113,33 +77,40 @@ export class ProductController {
   @Put(':id')
   async updateProduct(
     @Param('id') id: string,
-    @Body() updateProductDto: UpdateProductDto
+    @Body() updateProductDto: UpdateProductDto,
+    @Request() req
   ): Promise<ProductDocument> {
     try {
       if (updateProductDto.basePrice !== undefined && updateProductDto.basePrice <= 0) {
         throw new HttpException('Base price must be greater than 0', HttpStatus.BAD_REQUEST);
       }
 
-      // If updating main category, validate it exists
+      // If updating main category, validate it exists and belongs to user
       if (updateProductDto.mainCategory) {
-        const mainCategory = await this.categoryModel.findById(updateProductDto.mainCategory);
+        const mainCategory = await this.categoryModel.findOne({ 
+          _id: updateProductDto.mainCategory, 
+          userId: req.user.sub 
+        });
         if (!mainCategory) {
           throw new HttpException('Main category not found', HttpStatus.BAD_REQUEST);
         }
       }
 
-      // If updating sub-category, validate it exists and belongs to the main category
+      // If updating sub-category, validate it exists and belongs to the main category and user
       if (updateProductDto.subCategory) {
-        const product = await this.productService.findById(id);
+        const product = await this.productService.findByIdAndUser(id, req.user.sub);
         const mainCategoryId = updateProductDto.mainCategory || product?.mainCategory;
         
-        const subCategory = await this.categoryModel.findById(updateProductDto.subCategory);
+        const subCategory = await this.categoryModel.findOne({ 
+          _id: updateProductDto.subCategory, 
+          userId: req.user.sub 
+        });
         if (!subCategory || subCategory.parentId?.toString() !== mainCategoryId) {
           throw new HttpException('Invalid sub-category', HttpStatus.BAD_REQUEST);
         }
       }
 
-      const product = await this.productService.update(id, updateProductDto);
+      const product = await this.productService.updateByUser(id, updateProductDto, req.user.sub);
       if (!product) {
         throw new HttpException('Product not found', HttpStatus.NOT_FOUND);
       }
@@ -153,9 +124,9 @@ export class ProductController {
   }
 
   @Delete(':id')
-  async deleteProduct(@Param('id') id: string): Promise<{ message: string }> {
+  async deleteProduct(@Param('id') id: string, @Request() req): Promise<{ message: string }> {
     try {
-      const deleted = await this.productService.delete(id);
+      const deleted = await this.productService.deleteByUser(id, req.user.sub);
       if (!deleted) {
         throw new HttpException('Product not found', HttpStatus.NOT_FOUND);
       }
@@ -171,10 +142,11 @@ export class ProductController {
   @Put(':id/stock')
   async updateStock(
     @Param('id') id: string,
-    @Body() body: { stockChange: number }
+    @Body() body: { stockChange: number },
+    @Request() req
   ): Promise<ProductDocument> {
     try {
-      const product = await this.productService.updateStock(id, body.stockChange);
+      const product = await this.productService.updateStockByUser(id, body.stockChange, req.user.sub);
       if (!product) {
         throw new HttpException('Product not found', HttpStatus.NOT_FOUND);
       }
