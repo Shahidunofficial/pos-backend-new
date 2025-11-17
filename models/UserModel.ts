@@ -3,7 +3,8 @@ import { Document } from 'mongoose';
 
 export enum UserRole {
   ADMIN = 'admin',
-  CASHIER = 'cashier'
+  CASHIER = 'cashier',
+  CUSTOMER = 'customer'
 }
 
 export type UserDocument = User & Document;

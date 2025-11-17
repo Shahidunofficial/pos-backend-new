@@ -66,6 +66,86 @@ export class UserService {
     return user;
   }
 
+  async customerSignup(signupDto: { email: string; password: string; name: string }) {
+    const { email, password, name } = signupDto;
+
+    // Check if customer already exists
+    const existingCustomer = await this.userModel.findOne({ 
+      email, 
+      role: UserRole.CUSTOMER 
+    });
+    
+    if (existingCustomer) {
+      throw new ConflictException('Customer account already exists with this email');
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create customer user
+    const customer = new this.userModel({
+      email,
+      password: hashedPassword,
+      role: UserRole.CUSTOMER,
+      name
+    });
+
+    await customer.save();
+
+    // Generate JWT token
+    const payload = { 
+      sub: customer._id, 
+      email: customer.email, 
+      role: customer.role,
+      name: customer.name
+    };
+
+    return {
+      message: 'Customer account created successfully',
+      access_token: this.jwtService.sign(payload),
+      user: {
+        id: customer._id,
+        email: customer.email,
+        role: customer.role,
+        name: customer.name
+      }
+    };
+  }
+
+  async customerLogin(loginDto: { email: string; password: string }) {
+    const { email, password } = loginDto;
+
+    // Find customer by email
+    const user = await this.userModel.findOne({ email, role: UserRole.CUSTOMER });
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Generate JWT token
+    const payload = { 
+      sub: user._id, 
+      email: user.email,
+      role: user.role,
+      name: user.name
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      }
+    };
+  }
+
   async storeSignup(signupDto: StoreSignupDto) {
     const { storeName, adminEmail, adminPassword, adminName } = signupDto;
 

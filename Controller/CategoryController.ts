@@ -3,12 +3,7 @@ import { Category, CategoryDocument } from '../models/CategorySchema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
-
-interface CreateCategoryDto {
-  name: string;
-  parentId?: string;
-  level: number;
-}
+import { CreateCategoryDto } from '../dto/create-category.dto';
 
 @Controller('categories')
 @UseGuards(JwtAuthGuard)

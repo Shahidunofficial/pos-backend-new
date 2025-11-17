@@ -16,7 +16,19 @@ export class UserController {
     return this.userService.storeSignup(signupDto);
   }
 
-  // Login for existing users
+  // Customer registration
+  @Post('customer/register')
+  async customerRegister(@Body() signupDto: { email: string; password: string; name: string }) {
+    return this.userService.customerSignup(signupDto);
+  }
+
+  // Customer login
+  @Post('customer/login')
+  async customerLogin(@Body() loginDto: { email: string; password: string }) {
+    return this.userService.customerLogin(loginDto);
+  }
+
+  // Login for existing users (admin/cashier)
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     return this.userService.login(loginDto);
