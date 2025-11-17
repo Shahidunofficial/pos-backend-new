@@ -3,11 +3,7 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand ,Head
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as crypto from 'crypto';
 
-// AWS_ACCESS_KEY_ID=AKIA6C6KUGLMNGG6FOOL
-// AWS_SECRET_ACCESS_KEY=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
-// AWS_REGION=eu-north-1
-// AWS_S3_BUCKET_NAME=cellcare-products
-// AWS_S3_BUCKET_URL=https://cellcare-products.s3.eu-north-1.amazonaws.com
+
 
 @Injectable()
 export class S3Service {
@@ -17,9 +13,9 @@ export class S3Service {
   private region: string;
 
   constructor() {
-    this.region = process.env.AWS_REGION || 'eu-north-1';
-    this.bucketName = process.env.AWS_S3_BUCKET_NAME || 'cellcare-products';
-    this.bucketUrl = process.env.AWS_S3_BUCKET_URL || 'https://cellcare-products.s3.eu-north-1.amazonaws.com';
+    this.region = process.env.AWS_REGION!;
+    this.bucketName = process.env.AWS_S3_BUCKET_NAME!;
+    this.bucketUrl = process.env.AWS_S3_BUCKET_URL!;
 
     if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
       throw new Error('AWS credentials are not configured');
@@ -29,8 +25,8 @@ export class S3Service {
     this.s3Client = new S3Client({
       region: this.region,
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'AKIA6C6KUGLMNGG6FOOL',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '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',
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
       },
     });
   }
